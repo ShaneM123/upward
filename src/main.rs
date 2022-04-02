@@ -11,7 +11,7 @@ use crossterm::{
 };
 use std::{
     io,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -25,15 +25,6 @@ use tui::{
 
 
 const DATA: [(f64, f64); 5] = [(0.0, 0.0), (1.0, 1.0), (2.0, 2.0), (3.0, 3.0), (4.0, 4.0)];
-const DATA2: [(f64, f64); 7] = [
-    (0.0, 0.0),
-    (10.0, 1.0),
-    (20.0, 0.5),
-    (30.0, 1.5),
-    (40.0, 1.0),
-    (50.0, 2.5),
-    (60.0, 3.0),
-];
 
 #[derive(Clone)]
 pub struct SinSignal {
@@ -64,25 +55,16 @@ impl Iterator for SinSignal {
 }
 
 struct App {
-    signal1: SinSignal,
     data1: Vec<(f64, f64)>,
-    signal2: SinSignal,
-    data2: Vec<(f64, f64)>,
     window: [f64; 2],
 }
 
 impl App {
-    fn new() -> App {
-        let mut signal1 = SinSignal::new(0.2, 3.0, 18.0);
-        let mut signal2 = SinSignal::new(0.1, 2.0, 10.0);
-        let data1 = signal1.by_ref().take(200).collect::<Vec<(f64, f64)>>();
-        let data2 = signal2.by_ref().take(200).collect::<Vec<(f64, f64)>>();
+    fn new(points_to_be_mapped: Vec<(f64, f64)>) -> App {
+        let data1 = points_to_be_mapped;
 
         App {
-            signal1,
             data1,
-            signal2,
-            data2,
             window: [0.0, 20.0],
         }
     }
@@ -91,11 +73,6 @@ impl App {
         for _ in 0..5 {
             self.data1.remove(0);
         }
-        self.data1.extend(self.signal1.by_ref().take(5));
-        for _ in 0..10 {
-            self.data2.remove(0);
-        }
-        self.data2.extend(self.signal2.by_ref().take(10));
         self.window[0] += 1.0;
         self.window[1] += 1.0;
     }
@@ -122,9 +99,10 @@ pub struct LendableTable {
     start: Option<String>,
     #[serde(alias = "_stop")] 
     stop:  Option<String>,
+    #[serde(alias = "_time")] 
     time:  Option<String>,
     #[serde(alias = "_value")] 
-    value: Option<String>,
+    value: Option<f64>,
     #[serde(alias = "_field")] 
     field: Option<String>,
     #[serde(alias = "_measurement")] 
@@ -151,45 +129,50 @@ async fn main() {
 
     let req_url = format!(r"{}/api/v2/query\?orgID={}", influx_url, &org_id);
     let client = reqwest::Client::new();
-    let response = client.post( &req_url)
+    let csv_response = client.post( &req_url)
     .header("Authorization", format!("Token {}", token))
     .header("Accept", "application/csv")
     .header("Content-Type", "application/vnd.flux")
     .body(query)
     .send()
     .await.unwrap().text().await.unwrap();
-    let deservec: Vec<&str> = response.split('\n').collect();
-    //todo: iter over each line and extract the values, prob can refactor this a lot more too when my brain isnt mush
-   // let mapped = deservec.iter().map(|x| )
 
+    let mut reader = csv::Reader::from_reader(csv_response.as_bytes());
 
+    let mut records = Vec::<LendableTable>::new();
 
-        println!("response: {response:?}" );
+    for record in reader.deserialize() {
+        let record: LendableTable = record.unwrap();
+        records.push(record);
+    }
+   //let mut dataset = Vec::new();
+  // Duration::
+   //let x = SystemTime::deserialize(records.get(1).unwrap().time.unwrap()).unwrap();
+//    dataset.push((records.get(1).unwrap().value.unwrap(),10000_f64));
+//     // setup terminal
+//      enable_raw_mode().unwrap();
+//     let mut stdout = io::stdout();
+//      execute!(stdout, EnterAlternateScreen, EnableMouseCapture).unwrap();
+//      let backend = CrosstermBackend::new(stdout);
+//      let mut terminal = Terminal::new(backend).unwrap();
 
-    // // setup terminal
-    // enable_raw_mode().unwrap();
-    // let mut stdout = io::stdout();
-    // execute!(stdout, EnterAlternateScreen, EnableMouseCapture).unwrap();
-    // let backend = CrosstermBackend::new(stdout);
-    // let mut terminal = Terminal::new(backend).unwrap();
+//     // // create app and run it
+//     let tick_rate = Duration::from_secs(5);
+//     let app = App::new(dataset);
+//     let res = run_app(&mut terminal, app, tick_rate);
 
-    // // create app and run it
-    // let tick_rate = Duration::from_millis(250);
-    // let app = App::new();
-    // let res = run_app(&mut terminal, app, tick_rate);
+//     // // restore terminal
+//     disable_raw_mode().unwrap();
+//     execute!(
+//         terminal.backend_mut(),
+//         LeaveAlternateScreen,
+//         DisableMouseCapture
+//     ).unwrap();
+//     terminal.show_cursor().unwrap();
 
-    // // restore terminal
-    // disable_raw_mode().unwrap();
-    // execute!(
-    //     terminal.backend_mut(),
-    //     LeaveAlternateScreen,
-    //     DisableMouseCapture
-    // ).unwrap();
-    // terminal.show_cursor().unwrap();
-
-    // if let Err(err) = res {
-    //     println!("{:?}", err)
-    // }
+//     if let Err(err) = res {
+//         println!("{:?}", err)
+//     }
 }
 
 
@@ -245,15 +228,10 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
     ];
     let datasets = vec![
         Dataset::default()
-            .name("data2")
-            .marker(symbols::Marker::Dot)
-            .style(Style::default().fg(Color::Cyan))
-            .data(&app.data1),
-        Dataset::default()
             .name("data3")
             .marker(symbols::Marker::Braille)
             .style(Style::default().fg(Color::Yellow))
-            .data(&app.data2),
+            .data(&app.data1),
     ];
 
     let chart = Chart::new(datasets)
@@ -286,86 +264,4 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
                 .bounds([-20.0, 20.0]),
         );
     f.render_widget(chart, chunks[0]);
-
-    let datasets = vec![Dataset::default()
-        .name("data")
-        .marker(symbols::Marker::Braille)
-        .style(Style::default().fg(Color::Yellow))
-        .graph_type(GraphType::Line)
-        .data(&DATA)];
-    let chart = Chart::new(datasets)
-        .block(
-            Block::default()
-                .title(Span::styled(
-                    "Chart 2",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ))
-                .borders(Borders::ALL),
-        )
-        .x_axis(
-            Axis::default()
-                .title("X Axis")
-                .style(Style::default().fg(Color::Gray))
-                .bounds([0.0, 5.0])
-                .labels(vec![
-                    Span::styled("0", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw("2.5"),
-                    Span::styled("5.0", Style::default().add_modifier(Modifier::BOLD)),
-                ]),
-        )
-        .y_axis(
-            Axis::default()
-                .title("Y Axis")
-                .style(Style::default().fg(Color::Gray))
-                .bounds([0.0, 5.0])
-                .labels(vec![
-                    Span::styled("0", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw("2.5"),
-                    Span::styled("5.0", Style::default().add_modifier(Modifier::BOLD)),
-                ]),
-        );
-    f.render_widget(chart, chunks[1]);
-
-    let datasets = vec![Dataset::default()
-        .name("data")
-        .marker(symbols::Marker::Braille)
-        .style(Style::default().fg(Color::Yellow))
-        .graph_type(GraphType::Line)
-        .data(&DATA2)];
-    let chart = Chart::new(datasets)
-        .block(
-            Block::default()
-                .title(Span::styled(
-                    "Chart 3",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ))
-                .borders(Borders::ALL),
-        )
-        .x_axis(
-            Axis::default()
-                .title("X Axis")
-                .style(Style::default().fg(Color::Gray))
-                .bounds([0.0, 50.0])
-                .labels(vec![
-                    Span::styled("0", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw("25"),
-                    Span::styled("50", Style::default().add_modifier(Modifier::BOLD)),
-                ]),
-        )
-        .y_axis(
-            Axis::default()
-                .title("Y Axis")
-                .style(Style::default().fg(Color::Gray))
-                .bounds([0.0, 5.0])
-                .labels(vec![
-                    Span::styled("0", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw("2.5"),
-                    Span::styled("5", Style::default().add_modifier(Modifier::BOLD)),
-                ]),
-        );
-    f.render_widget(chart, chunks[2]);
 }
